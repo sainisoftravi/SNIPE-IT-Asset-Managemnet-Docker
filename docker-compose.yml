@@ -1,0 +1,69 @@
+services:
+  # MariaDB Database Container
+  mariadb:
+    build:
+      context: .
+      dockerfile: Dockerfile.mariadb
+    container_name: snipeit-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: snipeit_root_password
+      MYSQL_DATABASE: snipeit
+      MYSQL_USER: snipeit
+      MYSQL_PASSWORD: snipeit_password
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./mariadb.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    ports:
+      - "3307:3306"
+    networks:
+      - snipeit-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Ubuntu snipeit Container
+  snipeit:
+    build:
+      context: .
+      dockerfile: Dockerfile.snipeit
+    container_name: snipeit-app
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      # APP_KEY is required for Laravel encryption - set as environment variable for security
+      APP_KEY: base64:bH5cIhanzMxi6FPLJdaE+OIVZS/WvEEDq8+sDX6RtUQ=
+      APP_URL: http://localhost:8082
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_DATABASE: snipeit
+      DB_USERNAME: snipeit
+      DB_PASSWORD: snipeit_password
+      DB_ROOT_PASS: snipeit_root_password
+    volumes:
+      - snipeit_logs:/var/log/apache2
+    ports:
+      - "8082:80"
+    networks:
+      - snipeit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/snipeit/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  mariadb_data:
+    driver: local
+  snipeit_logs:
+    driver: local
+
+networks:
+  snipeit-network:
+    driver: bridge

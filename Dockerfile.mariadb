@@ -1,0 +1,18 @@
+# MariaDB Database Container
+FROM mariadb:10.11
+
+# Set environment variables for MariaDB
+ENV MYSQL_ROOT_PASSWORD=snipeit_root_password
+ENV MYSQL_DATABASE=snipeit
+ENV MYSQL_USER=snipeit
+ENV MYSQL_PASSWORD=snipeit_password
+
+# Create a custom configuration file
+COPY mariadb.cnf /etc/mysql/conf.d/custom.cnf
+
+# Expose MySQL port
+EXPOSE 3306
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD mysqladmin ping -h localhost -u root -p$MYSQL_ROOT_PASSWORD || exit 1

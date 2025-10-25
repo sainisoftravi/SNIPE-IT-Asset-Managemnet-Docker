@@ -1,0 +1,233 @@
+# Ubuntu snipeit Container
+FROM ubuntu:22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV APACHE_RUN_USER=www-data
+ENV APACHE_RUN_GROUP=www-data
+ENV APACHE_LOG_DIR=/var/log/apache2
+ENV APACHE_PID_FILE=/var/run/apache2/apache2.pid
+ENV APACHE_RUN_DIR=/var/run/apache2
+ENV APACHE_LOCK_DIR=/var/lock/apache2
+
+# Add PHP repo
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:ondrej/php -y \
+    && apt-get update && apt-get install -y \
+    apache2 \
+    php8.2 \
+    php8.2-mysql \
+    php8.2-gd \
+    php8.2-imap \
+    php8.2-ldap \
+    php8.2-mbstring \
+    php8.2-xml \
+    php8.2-xmlrpc \
+    php8.2-zip \
+    php8.2-curl \
+    php8.2-intl \
+    php8.2-bcmath \
+    php8.2-soap \
+    php8.2-cli \
+    php8.2-common \
+    php8.2-opcache \
+    php8.2-readline \
+    php8.2-sqlite3 \
+    php8.2-tidy \
+    php8.2-xsl \
+    php8.2-fpm \
+    libapache2-mod-php8.2 \
+    php8.2-apcu \
+    default-mysql-client \
+    curl wget unzip git supervisor cron \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# Enable Apache modules
+RUN a2enmod rewrite headers ssl
+
+# Configure PHP
+# Configure PHP 8.2
+RUN echo "memory_limit = 256M" >> /etc/php/8.2/apache2/php.ini \
+    && echo "upload_max_filesize = 20M" >> /etc/php/8.2/apache2/php.ini \
+    && echo "post_max_size = 20M" >> /etc/php/8.2/apache2/php.ini \
+    && echo "max_execution_time = 300" >> /etc/php/8.2/apache2/php.ini \
+    && echo "max_input_vars = 3000" >> /etc/php/8.2/apache2/php.ini \
+    && echo "date.timezone = UTC" >> /etc/php/8.2/apache2/php.ini
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- \
+    --install-dir=/usr/local/bin --filename=composer
+
+# Create snipeit directory
+RUN mkdir -p /var/www/html/snipeit
+
+# Copy snipeit files
+COPY snipeit/ /var/www/html/snipeit/
+
+# Set working directory
+WORKDIR /var/www/html/snipeit
+
+# Set environment variables for Laravel
+ENV APP_ENV=production
+ENV APP_DEBUG=false
+ENV APP_KEY=
+ENV APP_URL=http://localhost
+ENV APP_TIMEZONE=UTC
+ENV APP_LOCALE=en
+
+# Database environment variables
+ENV DB_CONNECTION=mysql
+ENV DB_HOST=mariadb
+ENV DB_PORT=3306
+ENV DB_DATABASE=snipeit
+ENV DB_USERNAME=snipeit
+ENV DB_PASSWORD=snipeit_password
+
+# Mail environment variables
+ENV MAIL_MAILER=smtp
+ENV MAIL_HOST=localhost
+ENV MAIL_PORT=587
+ENV MAIL_USERNAME=
+ENV MAIL_PASSWORD=
+ENV MAIL_FROM_ADDR=
+ENV MAIL_FROM_NAME=
+
+# Other Laravel settings
+ENV CACHE_DRIVER=file
+ENV SESSION_DRIVER=file
+ENV QUEUE_CONNECTION=sync
+ENV IMAGE_LIB=gd
+ENV SESSION_LIFETIME=12000
+
+# Install dependencies
+ENV COMPOSER_PROCESS_TIMEOUT=2000
+RUN composer install --no-dev --prefer-dist --no-plugins --no-scripts --no-interaction --no-progress
+
+# Create .env file with proper configuration
+RUN echo "APP_ENV=production" > .env && \
+    echo "APP_DEBUG=false" >> .env && \
+    echo "APP_KEY=" >> .env && \
+    echo "APP_URL=http://localhost" >> .env && \
+    echo "APP_TIMEZONE=UTC" >> .env && \
+    echo "APP_LOCALE=en" >> .env && \
+    echo "" >> .env && \
+    echo "DB_CONNECTION=mysql" >> .env && \
+    echo "DB_HOST=mariadb" >> .env && \
+    echo "DB_PORT=3306" >> .env && \
+    echo "DB_DATABASE=snipeit" >> .env && \
+    echo "DB_USERNAME=snipeit" >> .env && \
+    echo "DB_PASSWORD=snipeit_password" >> .env && \
+    echo "" >> .env && \
+    echo "MAIL_MAILER=smtp" >> .env && \
+    echo "MAIL_HOST=localhost" >> .env && \
+    echo "MAIL_PORT=587" >> .env && \
+    echo "MAIL_USERNAME=" >> .env && \
+    echo "MAIL_PASSWORD=" >> .env && \
+    echo "MAIL_FROM_ADDR=" >> .env && \
+    echo "MAIL_FROM_NAME=" >> .env && \
+    echo "" >> .env && \
+    echo "CACHE_DRIVER=file" >> .env && \
+    echo "SESSION_DRIVER=file" >> .env && \
+    echo "QUEUE_CONNECTION=sync" >> .env && \
+    echo "IMAGE_LIB=gd" >> .env && \
+    echo "SESSION_LIFETIME=12000" >> .env
+
+# Note: APP_KEY will be generated at runtime, not during build
+
+# Create symlink for mysqldump to ensure backup functionality works
+RUN ln -sf /usr/bin/mysqldump /usr/local/bin/mysqldump
+
+
+
+# Set proper permissions
+RUN chown -R www-data:www-data /var/www/html/snipeit
+# Create Apache virtual host configuration
+RUN echo '<VirtualHost *:80>\n\
+    DocumentRoot /var/www/html/snipeit/public\n\
+    ServerName localhost\n\
+    \n\
+    <Directory /var/www/html/snipeit/public>\n\
+        AllowOverride All\n\
+        Require all granted\n\
+    </Directory>\n\
+    \n\
+    ErrorLog ${APACHE_LOG_DIR}/snipeit_error.log\n\
+    CustomLog ${APACHE_LOG_DIR}/snipeit_access.log combined\n\
+</VirtualHost>' > /etc/apache2/sites-available/snipeit.conf
+
+# Enable the site
+RUN a2ensite snipeit.conf && a2dissite 000-default
+
+# Create log directories
+RUN mkdir -p /var/log/cron
+
+# Create supervisor configuration
+RUN echo '[supervisord]\n\
+nodaemon=true\n\
+\n\
+[program:apache2]\n\
+command=/usr/sbin/apache2ctl -D FOREGROUND\n\
+autostart=true\n\
+autorestart=true\n\
+stderr_logfile=/var/log/apache2/error.log\n\
+stdout_logfile=/var/log/apache2/access.log\n\
+\n\
+[program:cron]\n\
+command=/usr/sbin/cron -f\n\
+autostart=true\n\
+autorestart=true\n\
+stderr_logfile=/var/log/cron/error.log\n\
+stdout_logfile=/var/log/cron/access.log' > /etc/supervisor/conf.d/supervisord.conf
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+# Wait for database to be ready\n\
+echo "Waiting for database..."\n\
+while ! mysqladmin ping -h"$DB_HOST" -u"$DB_USERNAME" -p"$DB_PASSWORD" --silent; do\n\
+    sleep 1\n\
+done\n\
+echo "Database is ready!"\n\
+\n\
+# Update .env file with runtime environment variables (preserve APP_KEY)\n\
+if [ ! -z "$APP_URL" ]; then\n\
+    sed -i "s|APP_URL=.*|APP_URL=$APP_URL|g" .env\n\
+fi\n\
+if [ ! -z "$DB_HOST" ]; then\n\
+    sed -i "s|DB_HOST=.*|DB_HOST=$DB_HOST|g" .env\n\
+fi\n\
+if [ ! -z "$DB_DATABASE" ]; then\n\
+    sed -i "s|DB_DATABASE=.*|DB_DATABASE=$DB_DATABASE|g" .env\n\
+fi\n\
+if [ ! -z "$DB_USERNAME" ]; then\n\
+    sed -i "s|DB_USERNAME=.*|DB_USERNAME=$DB_USERNAME|g" .env\n\
+fi\n\
+if [ ! -z "$DB_PASSWORD" ]; then\n\
+    sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|g" .env\n\
+fi\n\
+\n\
+# Generate application key (following official Snipe-IT installation process)\n\
+echo "Generating application key..."\n\
+php artisan key:generate --force\n\
+\n\
+# Clear caches to ensure fresh configuration\n\
+php artisan config:clear\n\
+php artisan cache:clear\n\
+\n\
+# Run database migrations if needed\n\
+php artisan migrate --force\n\
+\n\
+# Start supervisor\n\
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf' > /usr/local/bin/start.sh
+
+RUN chmod +x /usr/local/bin/start.sh
+
+# Expose port 80
+EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/snipeit/ || exit 1
+
+# Start the application
+CMD ["/usr/local/bin/start.sh"]
